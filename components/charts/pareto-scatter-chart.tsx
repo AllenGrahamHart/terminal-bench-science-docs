@@ -394,7 +394,7 @@ export function ParetoScatterChart({
           const size = half * 2;
           const modelText = datum.label.model;
           const agentText = datum.label.agent;
-          const labelOnLeft = cx > MARGIN.left + plotW * 0.62;
+          const labelOnLeft = cx > MARGIN.left + plotW * 0.75;
           const labelX = labelOnLeft ? cx - half - 6 : cx + half + 6;
           return (
             <g key={datum.id}>
@@ -450,7 +450,7 @@ export function ParetoScatterChart({
               {datum.onFrontier ? (
                 <text
                   x={labelX}
-                  y={cy - (half + 2)}
+                  y={agentText ? cy - 2 : cy + 4}
                   textAnchor={labelOnLeft ? 'end' : 'start'}
                   dominantBaseline="auto"
                   className="fill-foreground"

@@ -8,6 +8,7 @@ import { PassRateBarChart } from '@/components/charts/pass-rate-bar-chart';
 import { RoadmapDiagram } from '@/components/charts/roadmap-diagram';
 import { TaskReviewProcess } from '@/components/charts/task-review-process';
 import { TokensVsStepsChart } from '@/components/charts/tokens-vs-steps-chart';
+import { ContributorGeographyMap } from '@/components/contributor-geography-map';
 import { MdxPre } from '@/components/mdx-codeblock';
 
 export function getMDXComponents(components?: MDXComponents) {
@@ -22,6 +23,7 @@ export function getMDXComponents(components?: MDXComponents) {
     TokensVsStepsChart,
     TaskReviewProcess,
     RoadmapDiagram,
+    ContributorGeographyMap,
     ...components,
   } satisfies MDXComponents;
 }

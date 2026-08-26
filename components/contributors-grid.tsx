@@ -9,8 +9,20 @@ function ContributorCard({ contributor }: { contributor: Contributor }) {
   const href = contributorHref(contributor);
 
   const className = cn(
-    'flex h-10 items-center bg-card px-2.5 text-xs font-medium tracking-tight uppercase no-underline outline-none transition-colors sm:text-sm',
+    'flex h-14 min-w-0 flex-col justify-center bg-card px-2.5 no-underline outline-none transition-colors',
     href && 'hover:bg-muted/50 focus-visible:bg-muted/50',
+  );
+  const content = (
+    <>
+      <span className="truncate text-xs font-medium tracking-tight uppercase sm:text-sm">
+        {contributor.name}
+      </span>
+      {contributor.affiliation ? (
+        <span className="truncate text-[10px] font-normal tracking-normal text-muted-foreground">
+          {contributor.affiliation}
+        </span>
+      ) : null}
+    </>
   );
 
   if (href) {
@@ -21,16 +33,12 @@ function ContributorCard({ contributor }: { contributor: Contributor }) {
         rel="noreferrer"
         className={className}
       >
-        <span className="truncate">{contributor.name}</span>
+        {content}
       </a>
     );
   }
 
-  return (
-    <div className={className}>
-      <span className="truncate">{contributor.name}</span>
-    </div>
-  );
+  return <div className={className}>{content}</div>;
 }
 
 function rowPadCount(count: number, columns: number): number {
@@ -53,7 +61,7 @@ function RowPad({
     <div
       aria-hidden
       className={cn(
-        'h-10 bg-card',
+        'h-14 bg-card',
         index < pad2 ? 'block' : 'hidden',
         index < pad3 ? 'sm:block' : 'sm:hidden',
         index < pad4 ? 'md:block' : 'md:hidden',

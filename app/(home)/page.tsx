@@ -1,6 +1,7 @@
 import { ArrowUpRight03Icon, TerminalIcon } from '@hugeicons/core-free-icons';
 import { HugeiconsIcon } from '@hugeicons/react';
 import Link from 'next/link';
+import { Suspense } from 'react';
 
 import { HeroTitle } from '@/components/hero-title';
 import { HomeView } from '@/components/home-view';
@@ -14,8 +15,8 @@ export default function HomePage() {
           <div className="flex flex-col items-center gap-6">
             <HeroTitle />
             <p className="max-w-xl text-balance text-lg font-normal tracking-tighter text-muted-foreground">
-              A benchmark for evaluating AI agents on computational workflows
-              in the natural sciences
+              A benchmark for evaluating AI agents on research workflows across
+              scientific domains
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -36,7 +37,13 @@ export default function HomePage() {
           </div>
         </div>
 
-        <HomeView />
+        <Suspense
+          fallback={
+            <div className="min-h-96 rounded-xl border bg-card" aria-hidden />
+          }
+        >
+          <HomeView />
+        </Suspense>
       </div>
     </div>
   );

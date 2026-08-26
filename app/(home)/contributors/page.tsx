@@ -19,7 +19,7 @@ export default function ContributorsPage() {
     >
       <h1>Contributors</h1>
       <p className="mb-10 text-muted-foreground">
-        The people and organizations building Terminal-Bench 3.0.
+        The people building Terminal-Bench-Science.
       </p>
       <ContributorsGrid />
     </article>
