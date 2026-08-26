@@ -12,7 +12,6 @@ import { useQueryState } from 'nuqs';
 import { useMemo, useState } from 'react';
 
 import {
-  DOMAIN_AXES,
   DomainRadarChart,
   buildDomainRadarData,
   type DomainRadarDatum,
@@ -29,6 +28,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { ViewDescriptionBar } from '@/components/view-description-bar';
+import { ViewHeader } from '@/components/view-header';
 import {
   TERMINAL_BENCH_LEADERBOARD,
   TERMINAL_BENCH_PACKAGE,
@@ -40,7 +41,18 @@ import {
   leaderboardFiltersParser,
   toUrlFilters,
 } from '@/lib/leaderboard-url-state';
-import { cn } from '@/lib/utils';
+import {
+  ALL_DOMAIN_RADAR_AXES,
+  domainExportTitle,
+  getDomain,
+  type DomainId,
+  type DomainRadarAxis,
+} from '@/lib/domain-context';
+import {
+  createExportClone,
+  highResolutionExportScale,
+  waitForExportImages,
+} from '@/lib/export-view';
 
 const DOMAIN_RADAR_IMAGE_ID = 'domain-radar-chart-image';
 const SVG_CAPTURE_PROPERTIES = [
@@ -56,24 +68,23 @@ const SVG_CAPTURE_PROPERTIES = [
 
 function resolveCaptureColor(value: string, context: CanvasRenderingContext2D): string {
   if (!value || value === 'none' || value === 'currentcolor') return value;
-  const fallback = '#010203';
-  context.fillStyle = fallback;
+  context.clearRect(0, 0, 1, 1);
+  context.fillStyle = 'rgb(1, 2, 3)';
   context.fillStyle = value;
-  return context.fillStyle === fallback && value !== fallback
-    ? value
-    : context.fillStyle;
+  context.fillRect(0, 0, 1, 1);
+  const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+  if (red === 1 && green === 2 && blue === 3 && alpha === 255) return value;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`;
 }
 
 function inlineDomainRadarSvgStyles(
   chart: HTMLElement,
 ): { backgroundColor?: string; restore: () => void } {
-  const svg = chart.querySelector('svg');
+  const svg = chart.querySelector<SVGSVGElement>('svg[role="img"]');
   if (!svg) return { restore: () => {} };
 
   const context = document.createElement('canvas').getContext('2d');
-  const cardBackground = chart.parentElement
-    ? window.getComputedStyle(chart.parentElement).backgroundColor
-    : undefined;
+  const cardBackground = window.getComputedStyle(chart).backgroundColor;
   const elements = [svg, ...svg.querySelectorAll<SVGElement>('*')];
   const originalStyles = elements.map((element) => ({
     element,
@@ -93,6 +104,24 @@ function inlineDomainRadarSvgStyles(
     }
   }
 
+  const isDark = document.documentElement.classList.contains('dark');
+  const mutedForeground = isDark ? '#a1a1aa' : '#71717a';
+  const gridColor = isDark
+    ? 'rgba(255, 255, 255, 0.22)'
+    : 'rgba(0, 0, 0, 0.2)';
+
+  for (const element of svg.querySelectorAll<SVGElement>('*')) {
+    const className = element.getAttribute('class') ?? '';
+    if (className.includes('stroke-border')) {
+      element.style.stroke = gridColor;
+      element.style.strokeWidth =
+        element.getAttribute('stroke-width') ?? '1.25';
+    }
+    if (className.includes('fill-muted-foreground')) {
+      element.style.fill = mutedForeground;
+    }
+  }
+
   return {
     backgroundColor: context
       ? resolveCaptureColor(cardBackground ?? '', context)
@@ -106,16 +135,24 @@ function inlineDomainRadarSvgStyles(
   };
 }
 
-function domainDataToTsv(data: DomainRadarDatum[]): string {
-  const header = ['Model', 'Agent', ...DOMAIN_AXES.map((axis) => axis.label)];
+function domainDataToTsv(
+  data: DomainRadarDatum[],
+  axes: readonly DomainRadarAxis[],
+  domain: DomainId,
+): string {
+  const header = [
+    'Model',
+    'Agent',
+    ...axes.map((axis) => axis.label.toUpperCase()),
+  ];
   const rows = data.map((datum) => [
     datum.label.model,
     datum.label.agent,
-    ...DOMAIN_AXES.map((axis) => String(datum.scores[axis.id])),
+    ...axes.map((axis) => String(datum.scores[axis.id])),
   ]);
 
   return [
-    ['Terminal-Bench Science 0.1 Domain Radar Data'],
+    [domainExportTitle(domain, 'Domain Radar Data')],
     [],
     header,
     ...rows,
@@ -124,7 +161,17 @@ function domainDataToTsv(data: DomainRadarDatum[]): string {
     .join('\n');
 }
 
-function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
+function CopyDomainRadarActions({
+  data,
+  axes,
+  domain,
+  accentColor,
+}: {
+  data: DomainRadarDatum[];
+  axes: readonly DomainRadarAxis[];
+  domain: DomainId;
+  accentColor: string;
+}) {
   const [tableCopyState, setTableCopyState] = useState<
     'idle' | 'copied' | 'error'
   >('idle');
@@ -134,7 +181,7 @@ function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
 
   async function copyData() {
     try {
-      await navigator.clipboard.writeText(domainDataToTsv(data));
+      await navigator.clipboard.writeText(domainDataToTsv(data, axes, domain));
       setTableCopyState('copied');
     } catch {
       setTableCopyState('error');
@@ -154,12 +201,15 @@ function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
       return;
     }
 
-    const { backgroundColor, restore } = inlineDomainRadarSvgStyles(chart);
+    const { element: exportChart, remove } = createExportClone(chart);
+    const { backgroundColor, restore } =
+      inlineDomainRadarSvgStyles(exportChart);
     try {
-      const image = await toBlob(chart, {
+      await waitForExportImages(exportChart);
+      const image = await toBlob(exportChart, {
         backgroundColor,
         cacheBust: true,
-        pixelRatio: 1,
+        pixelRatio: highResolutionExportScale(exportChart),
       });
       if (!image) throw new Error('Could not create domain radar image.');
       await navigator.clipboard.write([
@@ -170,6 +220,7 @@ function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
       setImageCopyState('error');
     } finally {
       restore();
+      remove();
     }
     window.setTimeout(() => setImageCopyState('idle'), 1600);
   }
@@ -190,11 +241,10 @@ function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
               <HugeiconsIcon
                 icon={tableCopyState === 'copied' ? Tick02Icon : Copy01Icon}
                 strokeWidth={2}
-                className={cn(
-                  tableCopyState === 'copied'
-                    ? 'text-[#038f99]'
-                    : 'text-muted-foreground',
-                )}
+                className="text-muted-foreground"
+                style={
+                  tableCopyState === 'copied' ? { color: accentColor } : undefined
+                }
               />
             </Button>
           }
@@ -221,11 +271,10 @@ function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
               <HugeiconsIcon
                 icon={imageCopyState === 'copied' ? Tick02Icon : Image01Icon}
                 strokeWidth={2}
-                className={cn(
-                  imageCopyState === 'copied'
-                    ? 'text-[#038f99]'
-                    : 'text-muted-foreground',
-                )}
+                className="text-muted-foreground"
+                style={
+                  imageCopyState === 'copied' ? { color: accentColor } : undefined
+                }
               />
             </Button>
           }
@@ -242,7 +291,10 @@ function CopyDomainRadarActions({ data }: { data: DomainRadarDatum[] }) {
   );
 }
 
-export function DomainRadarView() {
+export function DomainRadarView({ domain }: { domain: DomainId }) {
+  const domainDefinition = getDomain('all');
+  const filterAccentColor = getDomain(domain).color;
+  const axes = ALL_DOMAIN_RADAR_AXES;
   const { data, error, isPending } = useQuery({
     queryKey: leaderboardQueryKey(
       TERMINAL_BENCH_PACKAGE,
@@ -275,8 +327,8 @@ export function DomainRadarView() {
     );
   }, [data, facets.numberBounds, filters]);
   const chartData = useMemo(
-    () => buildDomainRadarData(filteredRows),
-    [filteredRows],
+    () => buildDomainRadarData(filteredRows, axes),
+    [axes, filteredRows],
   );
 
   function handleFiltersChange(next: LeaderboardFilters) {
@@ -294,6 +346,7 @@ export function DomainRadarView() {
       setOptions={facets.setOptions}
       columnVisibility={{}}
       onColumnVisibilityChange={() => {}}
+      accentColor={filterAccentColor}
       showColumnControls={false}
     />
   );
@@ -323,20 +376,26 @@ export function DomainRadarView() {
   return (
     <div className="flex w-full min-w-0 flex-col gap-1.5">
       <div className="flex items-center gap-1.5">
-        <CopyDomainRadarActions data={chartData} />
+        <CopyDomainRadarActions
+          data={chartData}
+          axes={axes}
+          domain="all"
+          accentColor={domainDefinition.color}
+        />
         {toolbar}
       </div>
-      <div className="-mx-4 min-w-0 overflow-hidden rounded-none border border-x-0 bg-card md:mx-0 md:rounded-xl md:border-x">
-        <div className="border-b px-4 py-3">
-          <p className="text-sm uppercase text-muted-foreground">
-            Domain profiles
-          </p>
-        </div>
+      <div
+        id={DOMAIN_RADAR_IMAGE_ID}
+        className="-mx-4 min-w-0 overflow-hidden rounded-none border border-x-0 bg-card md:mx-0 md:rounded-xl md:border-x"
+      >
+        <ViewHeader title="Terminal-Bench-Science 0.1 Domain Radar" />
         <DomainRadarChart
-          id={DOMAIN_RADAR_IMAGE_ID}
           data={chartData}
-          className="px-2 py-3"
+          axes={axes}
         />
+        <ViewDescriptionBar>
+          Resolution rates across scientific domains
+        </ViewDescriptionBar>
       </div>
     </div>
   );

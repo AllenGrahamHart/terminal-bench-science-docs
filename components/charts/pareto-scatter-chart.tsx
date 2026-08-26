@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { chartRowLabel, type ChartRowLabel } from '@/components/charts/chart-labels';
 import {
@@ -13,12 +13,17 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { getDomain, type DomainId } from '@/lib/domain-context';
 import { getAccessorValue, type LeaderboardRow } from '@/lib/leaderboard';
 import { cn } from '@/lib/utils';
 
 export type ParetoDatum = {
   id: string;
   label: ChartRowLabel;
+  reasoningEffort: string | null;
+  cost: number | null;
+  tokens: number | null;
+  releaseDate: number | null;
   x: number;
   y: number;
   accuracyStderr: number | null;
@@ -137,9 +142,23 @@ export function buildParetoData(
         row,
         'metrics.accuracy_stderr',
       );
+      const reasoningEffort = getAccessorValue(
+        row,
+        'metadata.reasoning_effort',
+      );
+      const cost = PARETO_AXES.cost.read(row);
+      const tokens = PARETO_AXES.tokens.read(row);
+      const releaseDate = PARETO_AXES.release_date.read(row);
       return {
         id: row.id,
         label: chartRowLabel(row),
+        reasoningEffort:
+          typeof reasoningEffort === 'string' && reasoningEffort.trim()
+            ? reasoningEffort.trim()
+            : null,
+        cost,
+        tokens,
+        releaseDate,
         x,
         y,
         accuracyStderr:
@@ -163,15 +182,20 @@ type ParetoScatterChartProps = {
   data: ParetoDatum[];
   xAxisId: ParetoAxisId;
   yAxisId: ParetoAxisId;
+  domain: DomainId;
+  accentColor: string;
   className?: string;
   id?: string;
 };
 
 type ActiveTip = {
   id: string;
-  label: string;
-  yValue: string;
-  xValue: string;
+  model: string;
+  agent: string;
+  reasoningEffort: string | null;
+  cost: string;
+  tokens: string;
+  releaseDate: string;
   cx: number;
   cy: number;
   onFrontier: boolean;
@@ -181,6 +205,8 @@ export function ParetoScatterChart({
   data,
   xAxisId,
   yAxisId,
+  domain,
+  accentColor,
   className,
   id,
 }: ParetoScatterChartProps) {
@@ -190,26 +216,40 @@ export function ParetoScatterChart({
   const [tipOpen, setTipOpen] = useState(false);
   const xAxis = PARETO_AXES[xAxisId];
   const yAxis = PARETO_AXES[yAxisId];
+  const domainDefinition = getDomain(domain);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = plotRef.current;
     if (!el) return;
 
     const update = () => {
-      setWidth(Math.max(MIN_WIDTH, Math.floor(el.clientWidth)));
+      const nextWidth = Math.max(
+        MIN_WIDTH,
+        Math.floor(el.getBoundingClientRect().width),
+      );
+      setWidth((current) => (current === nextWidth ? current : nextWidth));
     };
     update();
 
     const observer = new ResizeObserver(update);
     observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+    const frame = window.requestAnimationFrame(update);
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', update);
+    };
+  }, [data.length]);
 
-  // Clear tip when axes change so we don't show stale content.
+  // Clear tip when axes or domain scope change so we don't show stale content.
   useEffect(() => {
-    setTipOpen(false);
-    setActive(null);
-  }, [xAxisId, yAxisId]);
+    const frame = window.requestAnimationFrame(() => {
+      setTipOpen(false);
+      setActive(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [domain, xAxisId, yAxisId]);
 
   if (data.length === 0) {
     return (
@@ -242,14 +282,14 @@ export function ParetoScatterChart({
     .join(' ');
 
   return (
-    <div id={id} className={className}>
+    <div id={id} className={cn('w-full min-w-0', className)}>
       <div ref={plotRef} className="relative w-full overflow-hidden" style={{ height: HEIGHT }}>
       <svg
         viewBox={`0 0 ${width} ${HEIGHT}`}
         width={width}
         height={HEIGHT}
         role="img"
-        aria-label={`Pareto scatter of ${yAxis.label} versus ${xAxis.label}`}
+        aria-label={`Pareto scatter of ${yAxis.label} versus ${xAxis.label} for ${domainDefinition.title}`}
         className="block max-w-full"
       >
         {xTicks.slice(1, -1).map((tick) => (
@@ -342,8 +382,7 @@ export function ParetoScatterChart({
           <path
             d={frontierPath}
             fill="none"
-          stroke="#038f99"
-            className="stroke-[#038f99]"
+            stroke={accentColor}
             strokeWidth={2}
           />
         ) : null}
@@ -353,14 +392,15 @@ export function ParetoScatterChart({
           const cy = yScale(datum.y);
           const half = datum.onFrontier ? FRONTIER_DOT_HALF : DOT_HALF;
           const size = half * 2;
-          const agentPart = datum.label.agent
-            ? ` (${datum.label.agent})`
-            : '';
           const modelText = datum.label.model;
+          const agentText = datum.label.agent;
+          const labelOnLeft = cx > MARGIN.left + plotW * 0.62;
+          const labelX = labelOnLeft ? cx - half - 6 : cx + half + 6;
           return (
             <g key={datum.id}>
               {/* Invisible hit target in SVG space (avoids HTML/SVG coordinate drift). */}
               <rect
+                data-export-ignore=""
                 x={cx - 14}
                 y={cy - 14}
                 width={28}
@@ -369,9 +409,21 @@ export function ParetoScatterChart({
                 onMouseEnter={() => {
                   setActive({
                     id: datum.id,
-                    label: datum.label.full,
-                    yValue: yAxis.format(datum.y),
-                    xValue: xAxis.format(datum.x),
+                    model: modelText,
+                    agent: agentText,
+                    reasoningEffort: datum.reasoningEffort,
+                    cost:
+                      datum.cost == null
+                        ? '—'
+                        : PARETO_AXES.cost.format(datum.cost),
+                    tokens:
+                      datum.tokens == null
+                        ? '—'
+                        : PARETO_AXES.tokens.format(datum.tokens),
+                    releaseDate:
+                      datum.releaseDate == null
+                        ? '—'
+                        : PARETO_AXES.release_date.format(datum.releaseDate),
                     cx,
                     cy,
                     onFrontier: datum.onFrontier,
@@ -385,10 +437,10 @@ export function ParetoScatterChart({
                 y={cy - half}
                 width={size}
                 height={size}
-                fill={datum.onFrontier ? '#038f99' : undefined}
+                fill={datum.onFrontier ? accentColor : undefined}
                 className={
                   datum.onFrontier
-                    ? 'fill-[#038f99]'
+                    ? undefined
                     : active?.id === datum.id
                       ? 'fill-foreground'
                       : 'fill-muted-foreground/35'
@@ -397,23 +449,26 @@ export function ParetoScatterChart({
               />
               {datum.onFrontier ? (
                 <text
-                  x={
-                    cx > MARGIN.left + plotW * 0.62
-                      ? cx - half - 6
-                      : cx + half + 6
-                  }
+                  x={labelX}
                   y={cy - (half + 2)}
-                  textAnchor={
-                    cx > MARGIN.left + plotW * 0.62 ? 'end' : 'start'
-                  }
+                  textAnchor={labelOnLeft ? 'end' : 'start'}
                   dominantBaseline="auto"
-                  className="fill-foreground font-normal"
-                  fontSize={11}
+                  className="fill-foreground"
                   style={{ pointerEvents: 'none' }}
                 >
-                  <tspan>{modelText}</tspan>
-                  {agentPart ? (
-                    <tspan className="fill-muted-foreground">{agentPart}</tspan>
+                  <tspan x={labelX} fontSize={12} fontWeight={500}>
+                    {modelText}
+                  </tspan>
+                  {agentText ? (
+                    <tspan
+                      x={labelX}
+                      dy={12}
+                      className="fill-muted-foreground"
+                      fontSize={10}
+                      fontWeight={400}
+                    >
+                      {agentText}
+                    </tspan>
                   ) : null}
                 </text>
               ) : null}
@@ -432,6 +487,7 @@ export function ParetoScatterChart({
         }}
       >
         <TooltipTrigger
+          data-export-ignore=""
           type="button"
           tabIndex={-1}
           delay={0}
@@ -447,25 +503,44 @@ export function ParetoScatterChart({
           sideOffset={10}
           className={cn(
             'min-w-40',
-            active?.onFrontier &&
-              '!border-[#038f99] !bg-[#038f99] !text-white [&>*:last-child]:!bg-[#038f99] [&>*:last-child]:!fill-[#038f99]',
           )}
+          arrowStyle={
+            active?.onFrontier
+              ? {
+                  backgroundColor: accentColor,
+                  fill: accentColor,
+                }
+              : undefined
+          }
+          style={
+            active?.onFrontier
+              ? {
+                  backgroundColor: accentColor,
+                  borderColor: accentColor,
+                  color: 'white',
+                }
+              : undefined
+          }
         >
           {active ? (
-            <div className="flex flex-col gap-0.5">
-              <p>{active.label}</p>
-              <p className="flex items-baseline justify-between gap-6 opacity-70">
-                <span>{active.yValue}</span>
-                <span>{active.xValue}</span>
-              </p>
+            <div className="flex items-start justify-between gap-6">
+              <div className="min-w-0">
+                <p>{active.model}</p>
+                {active.agent ? (
+                  <p className="opacity-70">{active.agent}</p>
+                ) : null}
+                <p className="opacity-70">{active.reasoningEffort ?? '—'}</p>
+              </div>
+              <div className="shrink-0 text-right tabular-nums opacity-70">
+                <p>{active.cost}</p>
+                <p>{active.tokens}</p>
+                <p>{active.releaseDate}</p>
+              </div>
             </div>
           ) : null}
         </TooltipContent>
       </Tooltip>
       </div>
-      <p className="mt-2 text-center text-sm text-muted-foreground">
-        {yAxis.label} vs. {xAxis.label} on Terminal-Bench Science 0.1 Tasks
-      </p>
     </div>
   );
 }

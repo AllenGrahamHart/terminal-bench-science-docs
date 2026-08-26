@@ -20,6 +20,7 @@ import {
   useState,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 
@@ -39,7 +40,10 @@ type DataTableProps<TData, TValue> = {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
   emptyMessage?: string;
+  panelHeader?: ReactNode;
   footer?: ReactNode;
+  headerClassName?: string;
+  headerStyle?: CSSProperties;
   toolbar?: ReactNode;
   tableContainerId?: string;
   getRowId?: (originalRow: TData, index: number) => string;
@@ -112,7 +116,10 @@ export function DataTable<TData, TValue>({
   columns,
   data,
   emptyMessage = 'No results.',
+  panelHeader,
   footer,
+  headerClassName,
+  headerStyle,
   toolbar,
   tableContainerId,
   getRowId,
@@ -323,9 +330,10 @@ export function DataTable<TData, TValue>({
         id={tableContainerId}
         className="-mx-4 min-w-0 overflow-hidden rounded-none border border-x-0 bg-card md:mx-0 md:rounded-xl md:border-x"
       >
+      {panelHeader}
       <ScrollArea className="w-full">
         <Table className="min-w-max w-full">
-          <TableHeader>
+          <TableHeader className={headerClassName} style={headerStyle}>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
@@ -360,7 +368,7 @@ export function DataTable<TData, TValue>({
                     data-row-id={row.id}
                     data-row-index={visualIndex}
                     data-state={row.getIsSelected() && 'selected'}
-                    className={cn(href && 'cursor-pointer hover:!bg-[#038f99]/10')}
+                    className={cn(href && 'cursor-pointer')}
                     onClick={(event) => handleRowClick(row, event)}
                     onPointerDown={(event) =>
                       handleRowPointerDown(row, visualIndex, event)

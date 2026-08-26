@@ -42,19 +42,31 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { ViewDescriptionBar } from '@/components/view-description-bar';
+import { ViewHeader } from '@/components/view-header';
 import {
   TERMINAL_BENCH_LEADERBOARD,
   TERMINAL_BENCH_PACKAGE,
   fetchLeaderboard,
   formatLeaderboardCell,
   leaderboardQueryKey,
+  projectLeaderboardRowsToDomain,
 } from '@/lib/leaderboard';
+import {
+  domainExportTitle,
+  getDomain,
+  type DomainId,
+} from '@/lib/domain-context';
+import {
+  createExportClone,
+  highResolutionExportScale,
+  waitForExportImages,
+} from '@/lib/export-view';
 import {
   fromUrlFilters,
   leaderboardFiltersParser,
   toUrlFilters,
 } from '@/lib/leaderboard-url-state';
-import { cn } from '@/lib/utils';
 
 const parseParetoXAxis = parseAsStringLiteral(PARETO_X_AXIS_IDS);
 const PARETO_IMAGE_ID = 'pareto-chart-image';
@@ -72,24 +84,23 @@ const SVG_CAPTURE_PROPERTIES = [
 
 function resolveCaptureColor(value: string, context: CanvasRenderingContext2D): string {
   if (!value || value === 'none' || value === 'currentcolor') return value;
-  const fallback = '#010203';
-  context.fillStyle = fallback;
+  context.clearRect(0, 0, 1, 1);
+  context.fillStyle = 'rgb(1, 2, 3)';
   context.fillStyle = value;
-  return context.fillStyle === fallback && value !== fallback
-    ? value
-    : context.fillStyle;
+  context.fillRect(0, 0, 1, 1);
+  const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+  if (red === 1 && green === 2 && blue === 3 && alpha === 255) return value;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`;
 }
 
 function inlineParetoSvgStyles(
   chart: HTMLElement,
 ): { backgroundColor?: string; restore: () => void } {
-  const svg = chart.querySelector('svg');
+  const svg = chart.querySelector<SVGSVGElement>('svg[role="img"]');
   if (!svg) return { restore: () => {} };
 
   const context = document.createElement('canvas').getContext('2d');
-  const cardBackground = chart.parentElement
-    ? window.getComputedStyle(chart.parentElement).backgroundColor
-    : undefined;
+  const cardBackground = window.getComputedStyle(chart).backgroundColor;
 
   const elements = [svg, ...svg.querySelectorAll<SVGElement>('*')];
   const originalStyles = elements.map((element) => ({
@@ -107,6 +118,39 @@ function inlineParetoSvgStyles(
           ? resolveCaptureColor(value, context)
           : value,
       );
+    }
+  }
+
+  const isDark = document.documentElement.classList.contains('dark');
+  const foreground = isDark ? '#fafafa' : '#0a0a0a';
+  const mutedForeground = isDark ? '#a1a1aa' : '#71717a';
+  const gridColor = isDark
+    ? 'rgba(255, 255, 255, 0.2)'
+    : 'rgba(0, 0, 0, 0.2)';
+  const axisColor = isDark
+    ? 'rgba(161, 161, 170, 0.65)'
+    : 'rgba(82, 82, 91, 0.65)';
+  const mutedPoint = isDark
+    ? 'rgba(161, 161, 170, 0.35)'
+    : 'rgba(82, 82, 91, 0.35)';
+
+  for (const element of svg.querySelectorAll<SVGElement>('*')) {
+    const className = element.getAttribute('class') ?? '';
+    if (className.includes('stroke-border')) {
+      element.style.stroke = gridColor;
+      element.style.strokeWidth = '1';
+    }
+    if (className.includes('stroke-muted-foreground')) {
+      element.style.stroke = axisColor;
+      element.style.strokeWidth = '1.25';
+    }
+    if (className.includes('fill-foreground')) {
+      element.style.fill = foreground;
+    }
+    if (className.includes('fill-muted-foreground/35')) {
+      element.style.fill = mutedPoint;
+    } else if (className.includes('fill-muted-foreground')) {
+      element.style.fill = mutedForeground;
     }
   }
 
@@ -158,6 +202,7 @@ function paretoDataToTsv(
   data: ParetoDatum[],
   xAxisId: keyof typeof PARETO_AXES,
   yAxisId: keyof typeof PARETO_AXES,
+  domain: DomainId,
 ): string {
   const header = [
     'Model',
@@ -178,7 +223,7 @@ function paretoDataToTsv(
   const curveTitle = `${PARETO_AXES[yAxisId].label} vs. ${PARETO_AXES[xAxisId].label}`;
 
   return [
-    [`Terminal-Bench Science 0.1 Pareto Data (${curveTitle})`],
+    [`${domainExportTitle(domain, 'Pareto Data')} (${curveTitle})`],
     [],
     header,
     ...rows,
@@ -191,10 +236,14 @@ function CopyParetoActions({
   data,
   xAxisId,
   yAxisId,
+  domain,
+  accentColor,
 }: {
   data: ParetoDatum[];
   xAxisId: keyof typeof PARETO_AXES;
   yAxisId: keyof typeof PARETO_AXES;
+  domain: DomainId;
+  accentColor: string;
 }) {
   const [tableCopyState, setTableCopyState] = useState<
     'idle' | 'copied' | 'error'
@@ -206,7 +255,7 @@ function CopyParetoActions({
   async function copyData() {
     try {
       await navigator.clipboard.writeText(
-        paretoDataToTsv(data, xAxisId, yAxisId),
+        paretoDataToTsv(data, xAxisId, yAxisId, domain),
       );
       setTableCopyState('copied');
     } catch {
@@ -227,13 +276,17 @@ function CopyParetoActions({
       return;
     }
 
+    const { element: exportChart, remove } = createExportClone(chart);
     const { backgroundColor, restore: restoreSvgStyles } =
-      inlineParetoSvgStyles(chart);
+      inlineParetoSvgStyles(exportChart);
     try {
-      const image = await toBlob(chart, {
+      await waitForExportImages(exportChart);
+      const image = await toBlob(exportChart, {
         backgroundColor,
         cacheBust: true,
-        pixelRatio: 1,
+        pixelRatio: highResolutionExportScale(exportChart),
+        filter: (node) =>
+          !(node instanceof Element && node.hasAttribute('data-export-ignore')),
       });
       if (!image) throw new Error('Could not create Pareto chart image.');
       await navigator.clipboard.write([
@@ -244,6 +297,7 @@ function CopyParetoActions({
       setImageCopyState('error');
     } finally {
       restoreSvgStyles();
+      remove();
     }
     window.setTimeout(() => setImageCopyState('idle'), 1600);
   }
@@ -264,11 +318,10 @@ function CopyParetoActions({
               <HugeiconsIcon
                 icon={tableCopyState === 'copied' ? Tick02Icon : Copy01Icon}
                 strokeWidth={2}
-                className={cn(
-                  tableCopyState === 'copied'
-                    ? 'text-[#038f99]'
-                    : 'text-muted-foreground',
-                )}
+                className="text-muted-foreground"
+                style={
+                  tableCopyState === 'copied' ? { color: accentColor } : undefined
+                }
               />
             </Button>
           }
@@ -295,11 +348,10 @@ function CopyParetoActions({
               <HugeiconsIcon
                 icon={imageCopyState === 'copied' ? Tick02Icon : Image01Icon}
                 strokeWidth={2}
-                className={cn(
-                  imageCopyState === 'copied'
-                    ? 'text-[#038f99]'
-                    : 'text-muted-foreground',
-                )}
+                className="text-muted-foreground"
+                style={
+                  imageCopyState === 'copied' ? { color: accentColor } : undefined
+                }
               />
             </Button>
           }
@@ -316,7 +368,8 @@ function CopyParetoActions({
   );
 }
 
-export function ParetoView() {
+export function ParetoView({ domain }: { domain: DomainId }) {
+  const domainDefinition = getDomain(domain);
   const [xAxisId, setXAxisId] = useQueryState(
     'x',
     parseParetoXAxis.withDefault(DEFAULT_PARETO_X),
@@ -333,6 +386,11 @@ export function ParetoView() {
       fetchLeaderboard(TERMINAL_BENCH_PACKAGE, TERMINAL_BENCH_LEADERBOARD),
   });
 
+  const domainRows = useMemo(
+    () => (data ? projectLeaderboardRowsToDomain(data.rows, domain) : []),
+    [data, domain],
+  );
+
   const facets = useMemo(() => {
     if (!data) {
       return {
@@ -341,8 +399,8 @@ export function ParetoView() {
         setOptions: {},
       };
     }
-    return buildFilterFacets(data.leaderboard.columns, data.rows);
-  }, [data]);
+    return buildFilterFacets(data.leaderboard.columns, domainRows);
+  }, [data, domainRows]);
   const [urlFilters, setUrlFilters] = useQueryState(
     'filters',
     leaderboardFiltersParser,
@@ -354,12 +412,12 @@ export function ParetoView() {
   const filteredRows = useMemo(() => {
     if (!data) return [];
     return applyLeaderboardFilters(
-      data.rows,
+      domainRows,
       data.leaderboard.columns,
       filters,
       facets.numberBounds,
     );
-  }, [data, facets.numberBounds, filters]);
+  }, [data, domainRows, facets.numberBounds, filters]);
   function handleFiltersChange(next: LeaderboardFilters) {
     void setUrlFilters(toUrlFilters(next, facets.numberBounds));
   }
@@ -371,6 +429,12 @@ export function ParetoView() {
 
   const xLabel = PARETO_AXES[xAxisId].label;
   const yLabel = PARETO_AXES[yAxisId].label;
+  const xMetricDescription =
+    xAxisId === 'cost'
+      ? 'total cost'
+      : xAxisId === 'tokens'
+        ? 'total token usage'
+        : 'model release date';
 
   if (isPending) {
     return (
@@ -386,6 +450,7 @@ export function ParetoView() {
             setOptions={facets.setOptions}
             columnVisibility={{}}
             onColumnVisibilityChange={() => {}}
+            accentColor={domainDefinition.color}
             showColumnControls={false}
           />
         </div>
@@ -410,6 +475,7 @@ export function ParetoView() {
             setOptions={facets.setOptions}
             columnVisibility={{}}
             onColumnVisibilityChange={() => {}}
+            accentColor={domainDefinition.color}
             showColumnControls={false}
           />
         </div>
@@ -427,6 +493,8 @@ export function ParetoView() {
           data={chartData}
           xAxisId={xAxisId}
           yAxisId={yAxisId}
+          domain={domain}
+          accentColor={domainDefinition.color}
         />
         <LeaderboardToolbar
           columns={data.leaderboard.columns}
@@ -438,42 +506,76 @@ export function ParetoView() {
           setOptions={facets.setOptions}
           columnVisibility={{}}
           onColumnVisibilityChange={() => {}}
+          accentColor={domainDefinition.color}
           showColumnControls={false}
         />
       </div>
-      <div className="-mx-4 min-w-0 overflow-hidden rounded-none border border-x-0 bg-card md:mx-0 md:rounded-xl md:border-x">
-        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3 uppercase">
-          <span className="text-sm text-muted-foreground">{yLabel} vs</span>
-          <Select
-            value={xAxisId}
-            onValueChange={(next) => {
-              if (typeof next === 'string' && isParetoXAxisId(next)) {
-                void setXAxisId(next);
-              }
-            }}
-          >
-            <SelectTrigger
-              size="sm"
-              className="min-w-36 bg-background uppercase dark:bg-card"
+      <div
+        id={PARETO_IMAGE_ID}
+        className="-mx-4 min-w-0 overflow-hidden rounded-none border border-x-0 bg-card md:mx-0 md:rounded-xl md:border-x"
+      >
+        <ViewHeader
+          title={
+            <>
+              Terminal-Bench-Science 0.1 Pareto Frontier
+              {domain !== 'all' ? (
+                <>
+                  {' · '}
+                  <span data-export-domain-accent={domainDefinition.color}>
+                    {domainDefinition.title}
+                  </span>
+                </>
+              ) : null}
+            </>
+          }
+          subtitle={`${yLabel} vs. ${xLabel}`}
+        >
+          <div className="flex items-center gap-2 uppercase">
+            <span className="text-xs text-muted-foreground">{yLabel} vs</span>
+            <Select
+              value={xAxisId}
+              onValueChange={(next) => {
+                if (typeof next === 'string' && isParetoXAxisId(next)) {
+                  void setXAxisId(next);
+                }
+              }}
             >
-              <SelectValue>{xLabel}</SelectValue>
-            </SelectTrigger>
-            <SelectContent align="start">
-              {PARETO_X_AXIS_IDS.map((axisId) => (
-                <SelectItem key={axisId} value={axisId} className="uppercase">
-                  {PARETO_AXES[axisId].label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+              <SelectTrigger
+                size="sm"
+                className="min-w-36 bg-background text-xs uppercase dark:bg-card"
+              >
+                <SelectValue>{xLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectContent
+                side="bottom"
+                align="start"
+                alignItemWithTrigger={false}
+                collisionAvoidance={{ side: 'none' }}
+              >
+                {PARETO_X_AXIS_IDS.map((axisId) => (
+                  <SelectItem
+                    key={axisId}
+                    value={axisId}
+                    className="text-xs uppercase"
+                  >
+                    {PARETO_AXES[axisId].label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </ViewHeader>
         <ParetoScatterChart
           data={chartData}
           xAxisId={xAxisId}
           yAxisId={yAxisId}
-          id={PARETO_IMAGE_ID}
+          domain={domain}
+          accentColor={domainDefinition.color}
           className="px-2 py-3"
         />
+        <ViewDescriptionBar>
+          Resolution rate vs. {xMetricDescription}
+        </ViewDescriptionBar>
       </div>
     </div>
   );

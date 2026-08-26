@@ -273,6 +273,7 @@ type LeaderboardToolbarProps = {
   setOptions: SetOptions;
   columnVisibility: VisibilityState;
   onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+  accentColor: string;
   showColumnControls?: boolean;
   showViewToggle?: boolean;
 };
@@ -287,6 +288,7 @@ export function LeaderboardToolbar({
   setOptions,
   columnVisibility,
   onColumnVisibilityChange,
+  accentColor,
   showColumnControls = true,
   showViewToggle = true,
 }: LeaderboardToolbarProps) {
@@ -454,26 +456,23 @@ export function LeaderboardToolbar({
                       ? `Filters, ${activeFilterCount} selected`
                       : 'Filters'
                   }
-                  className={cn(
-                    'relative',
-                    activeFilterCount > 0 &&
-                      'bg-[#038f99]/10 text-[#027b84] dark:text-[#038f99]',
-                  )}
+                  className="relative"
                 />
               }
             >
               <HugeiconsIcon
                 icon={FilterIcon}
                 strokeWidth={2}
-                className={cn(
-                  'text-muted-foreground',
-                  activeFilterCount > 0 && 'text-[#038f99]',
-                )}
+                className="text-muted-foreground"
+                style={
+                  activeFilterCount > 0 ? { color: accentColor } : undefined
+                }
               />
               {activeFilterCount > 0 ? (
                 <span
                   aria-hidden="true"
-                  className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#038f99] px-1 text-[10px] leading-none tabular-nums text-white"
+                  className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none tabular-nums text-white"
+                  style={{ backgroundColor: accentColor }}
                 >
                   {activeFilterCount}
                 </span>
@@ -517,8 +516,40 @@ export function LeaderboardToolbar({
                       );
                     }
 
-                    // Date-range calendars are desktop-only; skip on mobile.
-                    if (column.type === 'date') return null;
+                    if (column.type === 'date' && dateBounds[column.id]) {
+                      const selected = filters.dates[column.id];
+                      const dateRange: DateRange | undefined = selected?.from
+                        ? {
+                            from: parseIsoDate(selected.from),
+                            to: selected.to
+                              ? parseIsoDate(selected.to)
+                              : undefined,
+                          }
+                        : undefined;
+                      return (
+                        <div key={column.id} className="flex flex-col gap-3">
+                          <p className="text-sm font-medium uppercase">
+                            {column.header}
+                          </p>
+                          <Calendar
+                            mode="range"
+                            numberOfMonths={1}
+                            selected={dateRange}
+                            onSelect={(range) =>
+                              setDateFilter(column.id, range)
+                            }
+                            defaultMonth={
+                              dateRange?.from ??
+                              parseIsoDate(dateBounds[column.id].min)
+                            }
+                            disabled={{
+                              before: parseIsoDate(dateBounds[column.id].min),
+                              after: parseIsoDate(dateBounds[column.id].max),
+                            }}
+                          />
+                        </div>
+                      );
+                    }
 
                     const options = setOptions[column.id];
                     if (!options?.length) return null;
@@ -649,26 +680,23 @@ export function LeaderboardToolbar({
                       ? `Filters, ${activeFilterCount} selected`
                       : 'Filters'
                   }
-                  className={cn(
-                    'relative',
-                    activeFilterCount > 0 &&
-                      'bg-[#038f99]/10 text-[#027b84] dark:text-[#038f99]',
-                  )}
+                  className="relative"
                 />
               }
             >
               <HugeiconsIcon
                 icon={FilterIcon}
                 strokeWidth={2}
-                className={cn(
-                  'text-muted-foreground',
-                  activeFilterCount > 0 && 'text-[#038f99]',
-                )}
+                className="text-muted-foreground"
+                style={
+                  activeFilterCount > 0 ? { color: accentColor } : undefined
+                }
               />
               {activeFilterCount > 0 ? (
                 <span
                   aria-hidden="true"
-                  className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#038f99] px-1 text-[10px] leading-none tabular-nums text-white"
+                  className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none tabular-nums text-white"
+                  style={{ backgroundColor: accentColor }}
                 >
                   {activeFilterCount}
                 </span>
@@ -685,7 +713,7 @@ export function LeaderboardToolbar({
                   return (
                     <DropdownMenuSub key={column.id}>
                       <DropdownMenuSubTrigger>
-                        <span className="min-w-0 flex-1 truncate">
+                        <span className="min-w-0 flex-1 truncate uppercase">
                           {column.header}
                         </span>
                         {isActive ? (
@@ -735,7 +763,7 @@ export function LeaderboardToolbar({
                   return (
                     <DropdownMenuSub key={column.id}>
                       <DropdownMenuSubTrigger>
-                        <span className="min-w-0 flex-1 truncate">
+                        <span className="min-w-0 flex-1 truncate uppercase">
                           {column.header}
                         </span>
                         {isActive ? (
@@ -776,7 +804,7 @@ export function LeaderboardToolbar({
                 return (
                   <DropdownMenuSub key={column.id}>
                     <DropdownMenuSubTrigger>
-                      <span className="min-w-0 flex-1 truncate">
+                      <span className="min-w-0 flex-1 truncate uppercase">
                         {column.header}
                       </span>
                       {selected.length > 0 ? (

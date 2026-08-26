@@ -1,3 +1,5 @@
+import type { DomainId } from '@/lib/domain-context';
+
 export type JsonObject = Record<string, unknown>;
 
 export type LeaderboardColumnType =
@@ -32,6 +34,39 @@ export type LeaderboardRow = {
   n_trials: number;
 };
 
+export type LeaderboardDomainMetric = {
+  tasks: number;
+  passes: number;
+  accuracy: number;
+  accuracy_stderr: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  display_accuracy: string;
+  display_total_tokens: string;
+  display_cost: string;
+};
+
+export type LeaderboardDomainMetrics = Record<
+  Exclude<DomainId, 'all'>,
+  LeaderboardDomainMetric
+>;
+
+export type LeaderboardMatrixTask = {
+  id: string;
+  slug: string;
+  domain: Exclude<DomainId, 'all'>;
+};
+
+export type LeaderboardTaskOutcome = {
+  solved: number;
+  total: number;
+};
+
+export type LeaderboardTaskMatrix = {
+  tasks: LeaderboardMatrixTask[];
+  rows: Record<string, Record<string, LeaderboardTaskOutcome>>;
+};
+
 export type LeaderboardReadResponse = {
   leaderboard: {
     id: string;
@@ -47,6 +82,7 @@ export type LeaderboardReadResponse = {
     updated_at: string;
   };
   rows: LeaderboardRow[];
+  task_matrix?: LeaderboardTaskMatrix;
   pagination?: {
     total: number;
     page: number;
@@ -55,17 +91,10 @@ export type LeaderboardReadResponse = {
   };
 };
 
-/**
- * TEMPORARY — pointed at the live Terminal-Bench 3.0 board so the leaderboard
- * renders with real data while the science dataset is unpublished.
- *
- * Revert to the values below once `terminal-bench-science` is on Hub:
- *   TERMINAL_BENCH_PACKAGE = 'terminal-bench-science/terminal-bench-science'
- *   TERMINAL_BENCH_LEADERBOARD = 'terminal-bench-science'
- */
-export const TERMINAL_BENCH_PACKAGE = 'frontier-bench/frontier-bench';
+export const TERMINAL_BENCH_PACKAGE =
+  'terminal-bench-science/terminal-bench-science';
 /** Hub path is org/package/leaderboard — board name (not `main`). */
-export const TERMINAL_BENCH_LEADERBOARD = 'frontier-bench';
+export const TERMINAL_BENCH_LEADERBOARD = 'v0-1-eval';
 export const HARBOR_HUB_URL = 'https://hub.harborframework.com';
 /** Public Harbor Hub edge-function host (leaderboard-read does not require auth). */
 export const HARBOR_HUB_FUNCTIONS_URL =
@@ -100,17 +129,17 @@ export async function fetchLeaderboard(
   packageName: string,
   name: string,
 ): Promise<LeaderboardReadResponse> {
+  const params = new URLSearchParams({
+    package: packageName,
+    name,
+  });
   const response = await fetch(
-    `${HARBOR_HUB_FUNCTIONS_URL}/functions/v1/leaderboard-read`,
+    `/api/leaderboard?${params.toString()}`,
     {
-      method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        Accept: 'application/json',
       },
-      body: JSON.stringify({
-        package: packageName,
-        name,
-      }),
+      cache: 'no-store',
     },
   );
 
@@ -126,7 +155,19 @@ export async function fetchLeaderboard(
     throw new Error(message);
   }
 
-  return payload as LeaderboardReadResponse;
+  const leaderboardPayload = payload as LeaderboardReadResponse;
+  return {
+    ...leaderboardPayload,
+    rows: rankLeaderboardRowsByEfficiency(leaderboardPayload.rows),
+    leaderboard: {
+      ...leaderboardPayload.leaderboard,
+      columns: leaderboardPayload.leaderboard.columns.map((column) =>
+        column.id === 'model_release_date'
+          ? { ...column, type: 'date' as const }
+          : column,
+      ),
+    },
+  };
 }
 
 export function getAccessorValue(
@@ -149,6 +190,99 @@ export function getAccessorValue(
   }
 
   return value;
+}
+
+function isDomainMetric(value: unknown): value is LeaderboardDomainMetric {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const metric = value as Partial<LeaderboardDomainMetric>;
+  return (
+    typeof metric.tasks === 'number' &&
+    typeof metric.passes === 'number' &&
+    typeof metric.accuracy === 'number' &&
+    typeof metric.accuracy_stderr === 'number' &&
+    typeof metric.total_tokens === 'number' &&
+    typeof metric.total_cost_usd === 'number' &&
+    typeof metric.display_accuracy === 'string' &&
+    typeof metric.display_total_tokens === 'string' &&
+    typeof metric.display_cost === 'string'
+  );
+}
+
+function numericRowMetric(
+  row: LeaderboardRow,
+  accessor: string,
+  fallback: number,
+): number {
+  const value = getAccessorValue(row, accessor);
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function compareNumbers(left: number, right: number): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+export function rankLeaderboardRowsByEfficiency(
+  rows: LeaderboardRow[],
+): LeaderboardRow[] {
+  return [...rows]
+    .sort((left, right) => {
+      const accuracyDelta = compareNumbers(
+        numericRowMetric(right, 'metrics.accuracy', -Infinity),
+        numericRowMetric(left, 'metrics.accuracy', -Infinity),
+      );
+      if (accuracyDelta !== 0) return accuracyDelta;
+
+      const costDelta = compareNumbers(
+        numericRowMetric(left, 'metrics.total_cost_usd', Infinity),
+        numericRowMetric(right, 'metrics.total_cost_usd', Infinity),
+      );
+      if (costDelta !== 0) return costDelta;
+
+      const tokenDelta = compareNumbers(
+        numericRowMetric(left, 'metrics.total_tokens', Infinity),
+        numericRowMetric(right, 'metrics.total_tokens', Infinity),
+      );
+      if (tokenDelta !== 0) return tokenDelta;
+
+      return left.id.localeCompare(right.id);
+    })
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
+export function projectLeaderboardRowsToDomain(
+  rows: LeaderboardRow[],
+  domain: DomainId,
+): LeaderboardRow[] {
+  if (domain === 'all') return rankLeaderboardRowsByEfficiency(rows);
+
+  const projectedRows = rows
+    .flatMap((row) => {
+      const domainMetrics = row.metrics.domain_metrics;
+      if (
+        typeof domainMetrics !== 'object' ||
+        domainMetrics === null ||
+        Array.isArray(domainMetrics)
+      ) {
+        return [];
+      }
+      const metric = (domainMetrics as JsonObject)[domain];
+      if (!isDomainMetric(metric)) return [];
+      return [
+        {
+          ...row,
+          metrics: {
+            ...row.metrics,
+            ...metric,
+          },
+          n_trials: metric.tasks,
+        },
+      ];
+    });
+
+  return rankLeaderboardRowsByEfficiency(projectedRows);
 }
 
 export type LeaderboardLinkValue = {

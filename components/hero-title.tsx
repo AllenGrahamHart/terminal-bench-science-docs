@@ -41,14 +41,16 @@ function DigitReel({ from, to }: { from: number; to: number }) {
 
 export function HeroTitle() {
   return (
-    <div className="flex flex-col items-center gap-3">
-      <h1 className="max-w-full px-1 text-pretty text-4xl font-normal tracking-tighter uppercase sm:text-5xl md:text-6xl">
-        TERMINAL-BENCH{' '}
-        <span className="text-[#038f99]">SCIENCE</span>
+    <div className="flex max-w-full flex-col items-center gap-3">
+      <h1 className="max-w-full px-1 text-pretty text-4xl font-normal tracking-tighter uppercase sm:text-5xl md:text-7xl">
+        TERMINAL-BENCH-
+        <span>SCIENCE</span>
       </h1>
-      <span className="inline-flex items-center rounded-none border border-[#038f99]/60 bg-[#038f99]/10 px-3 py-1 text-xs leading-none font-medium tracking-[0.14em] text-[#038f99] uppercase tabular-nums">
-        <span>Version 0.</span>
-        <DigitReel from={0} to={1} />
+      <span className="inline-flex h-6 items-center gap-1.5 rounded-sm border bg-card px-2 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+        Version
+        <span className="inline-flex items-baseline leading-none tracking-normal tabular-nums text-foreground">
+          0.<DigitReel from={0} to={1} />
+        </span>
       </span>
     </div>
   );

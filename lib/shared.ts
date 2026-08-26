@@ -1,4 +1,4 @@
-export const appName = 'TERMINAL-BENCH SCIENCE 0.1';
+export const appName = 'TERMINAL-BENCH-SCIENCE 0.1';
 export const docsRoute = '/docs';
 export const docsImageRoute = '/og/docs';
 export const docsContentRoute = '/llms.mdx/docs';

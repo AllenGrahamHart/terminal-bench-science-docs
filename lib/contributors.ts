@@ -102,6 +102,14 @@ export const CONTRIBUTOR_GROUPS: ContributorGroup[] = [
     ],
   },
   {
+    title: 'Advisors',
+    contributors: [
+      { name: 'Gian Segato', github: 'giansegato' },
+      { name: 'Mike Merrill', github: 'mikemerrill' },
+      { name: 'Nicholas Carlini', github: 'carlini' },
+    ],
+  },
+  {
     title: 'Reviewers',
     contributors: [
       { name: 'Hanwen Xing', github: 'harvenstar' },
@@ -138,14 +146,6 @@ export const CONTRIBUTOR_GROUPS: ContributorGroup[] = [
       { name: 'sherif69-sa', github: 'sherif69-sa' },
       { name: 'Kobe Chen', github: 'kobe0938' },
       { name: 'Sam Vance', github: 'scvance' },
-    ],
-  },
-  {
-    title: 'Advisors',
-    contributors: [
-      { name: 'Gian Segato', github: 'giansegato' },
-      { name: 'Mike Merrill', github: 'mikemerrill' },
-      { name: 'Nicholas Carlini', github: 'carlini' },
     ],
   },
 ];

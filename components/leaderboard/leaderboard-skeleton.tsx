@@ -60,7 +60,7 @@ export function LeaderboardSkeleton() {
       <div className="-mx-4 min-w-0 overflow-hidden rounded-none border border-x-0 bg-card md:mx-0 md:rounded-xl md:border-x">
         <ScrollArea className="w-full">
           <Table className="min-w-max w-full">
-            <TableHeader>
+            <TableHeader className="border-y">
               <TableRow>
                 {SKELETON_HEADERS.map((header) => (
                   <TableHead key={header.id} className={header.className}>
@@ -88,9 +88,7 @@ export function LeaderboardSkeleton() {
           </Table>
         </ScrollArea>
         <footer className="flex h-12 items-center justify-center border-t px-6 text-center text-sm text-muted-foreground">
-          Resolution rate of Terminal-Bench Science 0.1 tasks, ranked by agent
-          and model
-          performance.
+          Resolution rate ranked by agent and model performance
         </footer>
       </div>
     </div>

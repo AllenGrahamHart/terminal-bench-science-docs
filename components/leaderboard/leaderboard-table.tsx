@@ -34,6 +34,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { ViewDescriptionBar } from '@/components/view-description-bar';
+import { ViewHeader } from '@/components/view-header';
 import {
   TERMINAL_BENCH_LEADERBOARD,
   TERMINAL_BENCH_PACKAGE,
@@ -43,10 +45,21 @@ import {
   harborLeaderboardRowUrl,
   leaderboardQueryKey,
   parseLeaderboardLink,
+  projectLeaderboardRowsToDomain,
   type LeaderboardColumn,
   type LeaderboardColumnType,
   type LeaderboardRow,
 } from '@/lib/leaderboard';
+import {
+  domainExportTitle,
+  getDomain,
+  type DomainId,
+} from '@/lib/domain-context';
+import {
+  createExportClone,
+  highResolutionExportScale,
+  waitForExportImages,
+} from '@/lib/export-view';
 import {
   fromUrlFilters,
   hiddenColumnsParser,
@@ -131,7 +144,13 @@ function LeaderboardCell({
 
 const Z_95 = 1.96;
 
-function AccuracyBarCell({ row }: { row: LeaderboardRow }) {
+function AccuracyBarCell({
+  row,
+  accentColor,
+}: {
+  row: LeaderboardRow;
+  accentColor: string;
+}) {
   const accuracy = getAccessorValue(row, 'metrics.accuracy');
   const stderr = getAccessorValue(row, 'metrics.accuracy_stderr');
   const display = getAccessorValue(row, 'metrics.display_accuracy');
@@ -151,19 +170,23 @@ function AccuracyBarCell({ row }: { row: LeaderboardRow }) {
   }
 
   return (
-    <div className="flex min-w-52 items-center gap-3">
-      <div className="w-28 shrink-0 tabular-nums">
+    <div className="flex min-w-60 items-center gap-3">
+      <div className="w-32 shrink-0 whitespace-nowrap tabular-nums">
         <LeaderboardCell value={display ?? accuracy} type="markdown" />
       </div>
-      <div className="relative h-3 min-w-0 flex-1 overflow-hidden rounded-none bg-muted">
+      <div className="relative h-3 min-w-20 flex-1 overflow-hidden rounded-none bg-muted">
         <div
-          className="absolute inset-y-0 left-0 rounded-none bg-foreground/80"
-          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+          className="absolute inset-y-0 left-0 rounded-none"
+          style={{
+            backgroundColor: accentColor,
+            width: `${Math.min(100, Math.max(0, value))}%`,
+          }}
         />
         {ciWidth > 0 ? (
           <div
-            className="absolute inset-y-0 rounded-none bg-foreground/15"
+            className="absolute inset-y-0 rounded-none"
             style={{
+              backgroundColor: `color-mix(in srgb, ${accentColor} 35%, transparent)`,
               left: `${Math.min(100, Math.max(0, value))}%`,
               width: `${ciWidth}%`,
             }}
@@ -314,6 +337,7 @@ function tableRowsToTsv(
   rows: LeaderboardRow[],
   columns: LeaderboardColumn[],
   columnVisibility: VisibilityState,
+  domain: DomainId,
 ): string {
   const exportColumns = orderLeaderboardColumns(columns).filter(
     (column) =>
@@ -362,7 +386,7 @@ function tableRowsToTsv(
   });
 
   return [
-    ['Terminal-Bench Science 0.1 Leaderboard'],
+    [domainExportTitle(domain, 'Leaderboard')],
     [],
     header,
     ...lines,
@@ -375,10 +399,14 @@ function CopyLeaderboardActions({
   rows,
   columns,
   columnVisibility,
+  domain,
+  accentColor,
 }: {
   rows: LeaderboardRow[];
   columns: LeaderboardColumn[];
   columnVisibility: VisibilityState;
+  domain: DomainId;
+  accentColor: string;
 }) {
   const [tableCopyState, setTableCopyState] = useState<
     'idle' | 'copied' | 'error'
@@ -390,7 +418,7 @@ function CopyLeaderboardActions({
   async function copyTable() {
     try {
       await navigator.clipboard.writeText(
-        tableRowsToTsv(rows, columns, columnVisibility),
+        tableRowsToTsv(rows, columns, columnVisibility, domain),
       );
       setTableCopyState('copied');
     } catch {
@@ -411,10 +439,48 @@ function CopyLeaderboardActions({
       return;
     }
 
+    const { element: exportTable, remove } = createExportClone(table);
     try {
-      const image = await toBlob(table, {
+      const exportScrollArea = exportTable.querySelector<HTMLElement>(
+        '[data-slot="scroll-area"]',
+      );
+      const exportViewport = exportTable.querySelector<HTMLElement>(
+        '[data-slot="scroll-area-viewport"]',
+      );
+      const exportDataTable = exportTable.querySelector<HTMLTableElement>(
+        '[data-slot="table"]',
+      );
+      if (exportScrollArea && exportViewport && exportDataTable) {
+        const fullTableWidth = Math.ceil(exportDataTable.scrollWidth);
+        const exportWidth = Math.max(fullTableWidth, exportTable.offsetWidth);
+        exportTable.style.width = `${exportWidth}px`;
+        exportTable.style.maxWidth = 'none';
+        exportTable.style.overflow = 'visible';
+        exportScrollArea.style.width = `${exportWidth}px`;
+        exportScrollArea.style.overflow = 'visible';
+        exportViewport.scrollLeft = 0;
+        exportViewport.style.width = `${exportWidth}px`;
+        exportViewport.style.overflow = 'visible';
+        exportDataTable.style.width = `${exportWidth}px`;
+        for (const scrollbar of exportTable.querySelectorAll(
+          '[data-slot="scroll-area-scrollbar"]',
+        )) {
+          scrollbar.remove();
+        }
+      }
+      for (const row of exportTable.querySelectorAll<HTMLElement>(
+        'tbody [data-slot="table-row"]',
+      )) {
+        row.removeAttribute('data-state');
+        row.style.backgroundColor = 'transparent';
+      }
+      await waitForExportImages(exportTable);
+      const backgroundColor =
+        window.getComputedStyle(exportTable).backgroundColor;
+      const image = await toBlob(exportTable, {
+        backgroundColor,
         cacheBust: true,
-        pixelRatio: 2,
+        pixelRatio: highResolutionExportScale(exportTable),
       });
       if (!image) throw new Error('Could not create table image.');
 
@@ -424,6 +490,8 @@ function CopyLeaderboardActions({
       setImageCopyState('copied');
     } catch {
       setImageCopyState('error');
+    } finally {
+      remove();
     }
 
     window.setTimeout(() => setImageCopyState('idle'), 1600);
@@ -447,11 +515,10 @@ function CopyLeaderboardActions({
                   tableCopyState === 'copied' ? Tick02Icon : Copy01Icon
                 }
                 strokeWidth={2}
-                className={cn(
-                  tableCopyState === 'copied'
-                    ? 'text-[#038f99]'
-                    : 'text-muted-foreground',
-                )}
+                className="text-muted-foreground"
+                style={
+                  tableCopyState === 'copied' ? { color: accentColor } : undefined
+                }
               />
             </Button>
           }
@@ -480,11 +547,10 @@ function CopyLeaderboardActions({
                   imageCopyState === 'copied' ? Tick02Icon : Image01Icon
                 }
                 strokeWidth={2}
-                className={cn(
-                  imageCopyState === 'copied'
-                    ? 'text-[#038f99]'
-                    : 'text-muted-foreground',
-                )}
+                className="text-muted-foreground"
+                style={
+                  imageCopyState === 'copied' ? { color: accentColor } : undefined
+                }
               />
             </Button>
           }
@@ -503,6 +569,7 @@ function CopyLeaderboardActions({
 
 function buildColumns(
   columns: LeaderboardColumn[],
+  accentColor: string,
 ): ColumnDef<LeaderboardRow>[] {
   const rankColumn: ColumnDef<LeaderboardRow> = {
     id: 'rank',
@@ -568,7 +635,12 @@ function buildColumns(
           }
 
           if (column.id === 'accuracy') {
-            return <AccuracyBarCell row={row.original} />;
+            return (
+              <AccuracyBarCell
+                row={row.original}
+                accentColor={accentColor}
+              />
+            );
           }
 
           return <LeaderboardCell value={value} type={displayType} />;
@@ -588,7 +660,8 @@ function buildColumns(
   return [rankColumn, ...dataColumns];
 }
 
-export function LeaderboardTable() {
+export function LeaderboardTable({ domain }: { domain: DomainId }) {
+  const domainDefinition = getDomain(domain);
   const { data, error, isPending } = useQuery({
     queryKey: leaderboardQueryKey(
       TERMINAL_BENCH_PACKAGE,
@@ -598,6 +671,11 @@ export function LeaderboardTable() {
       fetchLeaderboard(TERMINAL_BENCH_PACKAGE, TERMINAL_BENCH_LEADERBOARD),
   });
 
+  const domainRows = useMemo(
+    () => (data ? projectLeaderboardRowsToDomain(data.rows, domain) : []),
+    [data, domain],
+  );
+
   const facets = useMemo(() => {
     if (!data) {
       return {
@@ -606,8 +684,8 @@ export function LeaderboardTable() {
         setOptions: {},
       };
     }
-    return buildFilterFacets(data.leaderboard.columns, data.rows);
-  }, [data]);
+    return buildFilterFacets(data.leaderboard.columns, domainRows);
+  }, [data, domainRows]);
 
   const [urlFilters, setUrlFilters] = useQueryState(
     'filters',
@@ -650,16 +728,19 @@ export function LeaderboardTable() {
   const filteredRows = useMemo(() => {
     if (!data) return [];
     return applyLeaderboardFilters(
-      data.rows,
+      domainRows,
       data.leaderboard.columns,
       filters,
       facets.numberBounds,
     );
-  }, [data, facets.numberBounds, filters]);
+  }, [data, domainRows, facets.numberBounds, filters]);
 
   const tableColumns = useMemo(
-    () => (data ? buildColumns(data.leaderboard.columns) : []),
-    [data],
+    () =>
+      data
+        ? buildColumns(data.leaderboard.columns, domainDefinition.color)
+        : [],
+    [data, domainDefinition.color],
   );
 
   const columnOptions = useMemo(() => {
@@ -702,6 +783,26 @@ export function LeaderboardTable() {
         columns={tableColumns}
         data={filteredRows}
         emptyMessage="No leaderboard rows match the current filters."
+        panelHeader={
+          <ViewHeader
+            title={
+              <>
+                Terminal-Bench-Science 0.1 Leaderboard
+                {domain !== 'all' ? (
+                  <>
+                    {' · '}
+                    <span
+                      data-export-domain-accent={domainDefinition.color}
+                    >
+                      {domainDefinition.title}
+                    </span>
+                  </>
+                ) : null}
+              </>
+            }
+          />
+        }
+        headerClassName="border-b"
         tableContainerId={TABLE_IMAGE_ID}
         getRowId={(row) => row.id}
         getRowHref={(row) =>
@@ -719,6 +820,8 @@ export function LeaderboardTable() {
               rows={filteredRows}
               columns={data.leaderboard.columns}
               columnVisibility={columnVisibility}
+              domain={domain}
+              accentColor={domainDefinition.color}
             />
             <LeaderboardToolbar
               columns={toolbarColumns}
@@ -730,15 +833,14 @@ export function LeaderboardTable() {
               setOptions={facets.setOptions}
               columnVisibility={columnVisibility}
               onColumnVisibilityChange={handleColumnVisibilityChange}
+              accentColor={domainDefinition.color}
             />
           </div>
         }
         footer={
-          <footer className="flex h-12 items-center justify-center border-t px-6 text-center text-sm text-muted-foreground">
-            Resolution rate of Terminal-Bench Science 0.1 tasks, ranked by agent
-            and model
-            performance.
-          </footer>
+          <ViewDescriptionBar>
+            Resolution rate ranked by agent and model performance
+          </ViewDescriptionBar>
         }
       />
     </div>
