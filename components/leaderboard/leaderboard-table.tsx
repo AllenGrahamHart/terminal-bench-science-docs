@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import {
   ArrowDown01Icon,
   ArrowUp01Icon,
@@ -841,7 +843,7 @@ export function LeaderboardTable({ domain }: { domain: DomainId }) {
           <ViewDescriptionBar>
             95% confidence intervals use task averages and describe uncertainty
             across comparable tasks.{' '}
-            <a href="/docs/evaluation-statistics" className="underline">Methodology</a>
+            <Link href="/docs/evaluation-statistics" className="underline">Methodology</Link>
           </ViewDescriptionBar>
         }
       />

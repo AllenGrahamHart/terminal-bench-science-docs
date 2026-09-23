@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import {
   Copy01Icon,
   Image01Icon,
@@ -574,7 +576,7 @@ export function ParetoView({ domain }: { domain: DomainId }) {
         <ViewDescriptionBar>
           Resolution rate vs. {xMetricDescription}. Whiskers show 95% task-level
           confidence intervals.{' '}
-          <a href="/docs/evaluation-statistics" className="underline">Methodology</a>
+          <Link href="/docs/evaluation-statistics" className="underline">Methodology</Link>
         </ViewDescriptionBar>
       </div>
     </div>
