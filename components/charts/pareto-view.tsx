@@ -572,7 +572,9 @@ export function ParetoView({ domain }: { domain: DomainId }) {
           className="px-2 py-3"
         />
         <ViewDescriptionBar>
-          Resolution rate vs. {xMetricDescription}
+          Resolution rate vs. {xMetricDescription}. Whiskers show 95% task-level
+          confidence intervals.{' '}
+          <a href="/docs/evaluation-statistics" className="underline">Methodology</a>
         </ViewDescriptionBar>
       </div>
     </div>

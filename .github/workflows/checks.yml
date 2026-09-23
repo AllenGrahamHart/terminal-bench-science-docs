@@ -2,7 +2,6 @@ name: Website checks
 
 on:
   push:
-    branches: [main, fix/task-confidence-intervals]
   pull_request:
   workflow_dispatch:
 
